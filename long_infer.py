@@ -12,6 +12,7 @@ from typing import Any
 SENTENCE_ENDERS = set("。．.!?！？")
 SOFT_BREAKS = set("、，,;；:：")
 CLOSERS = set("」』”’）)]｝】》〉")
+JAPANESE_TEXT_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 
 
 def _parse_optional_float(value: str) -> float | None:
@@ -166,6 +167,49 @@ def chunk_text(text: str, *, max_chars: int) -> list[str]:
         else:
             units.append(sentence)
     return _pack_units(units, max_chars)
+
+
+def _strip_trailing_closers(text: str) -> tuple[str, str]:
+    body = text.rstrip()
+    closers = ""
+    while body and body[-1] in CLOSERS:
+        closers = body[-1] + closers
+        body = body[:-1].rstrip()
+    return body, closers
+
+
+def _has_sentence_end(text: str) -> bool:
+    body, _closers = _strip_trailing_closers(text)
+    return bool(body) and body[-1] in SENTENCE_ENDERS
+
+
+def _boundary_punctuation(text: str) -> str:
+    return "。" if JAPANESE_TEXT_RE.search(text) else "."
+
+
+def _punctuate_boundary(text: str) -> str:
+    trailing_ws_len = len(text) - len(text.rstrip())
+    trailing_ws = text[len(text) - trailing_ws_len :] if trailing_ws_len else ""
+    body, closers = _strip_trailing_closers(text)
+    if not body or body[-1] in SENTENCE_ENDERS:
+        return text
+    if body[-1] in SOFT_BREAKS:
+        body = body[:-1].rstrip()
+    if not body or body[-1] in SENTENCE_ENDERS:
+        return body + closers + trailing_ws
+    return body + _boundary_punctuation(body) + closers + trailing_ws
+
+
+def stabilize_chunk_boundaries(chunks: list[str], *, mode: str) -> list[str]:
+    if mode == "off":
+        return list(chunks)
+    if mode != "punctuate":
+        raise ValueError(f"Unsupported boundary mode: {mode}")
+    out: list[str] = []
+    last_index = len(chunks) - 1
+    for i, chunk in enumerate(chunks):
+        out.append(chunk if i == last_index or _has_sentence_end(chunk) else _punctuate_boundary(chunk))
+    return out
 
 
 def _preview_text(text: str, limit: int = 72) -> str:
@@ -430,6 +474,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only show the text split; do not load the model.",
     )
+    text_group.add_argument(
+        "--boundary-mode",
+        choices=["punctuate", "off"],
+        default="punctuate",
+        help=(
+            "How to stabilize chunk endings for synthesis. 'punctuate' adds a sentence "
+            "ending to non-final chunks that do not already end like a sentence."
+        ),
+    )
 
     parser.add_argument(
         "--lora-adapter",
@@ -520,11 +573,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["mask", "noise"],
         default="mask",
     )
-    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument(
         "--seed-mode",
         choices=["offset", "same", "random"],
-        default="offset",
+        default="same",
         help="How to derive per-chunk seeds when --seed is set.",
     )
     parser.add_argument("--trim-tail", action=argparse.BooleanOptionalAction, default=True)
@@ -573,6 +626,7 @@ def main() -> None:
     chunks = chunk_text(long_text, max_chars=max_chars)
     if not chunks:
         parser.error("Text produced no chunks.")
+    synthesis_chunks = stabilize_chunk_boundaries(chunks, mode=str(args.boundary_mode))
 
     total_chars = sum(_visible_len(chunk) for chunk in chunks)
     print(
@@ -587,6 +641,9 @@ def main() -> None:
             f"est={est_seconds:.1f}s text={_preview_text(chunk)}",
             flush=True,
         )
+        synth_chunk = synthesis_chunks[i - 1]
+        if synth_chunk != chunk:
+            print(f"[boundary {i:03d}] synthesis_text={_preview_text(synth_chunk)}", flush=True)
 
     if args.dry_run:
         return
@@ -673,7 +730,7 @@ def main() -> None:
             f"using manual chunk seconds={manual_chunk_seconds:.3f}",
             flush=True,
         )
-    for i, chunk in enumerate(chunks, start=1):
+    for i, chunk in enumerate(synthesis_chunks, start=1):
         seed = _chunk_seed(args.seed, i, str(args.seed_mode))
         print(
             f"[synthesize] chunk {i}/{len(chunks)} seed={'random' if seed is None else seed}",

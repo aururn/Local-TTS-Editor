@@ -52,14 +52,22 @@ Useful controls:
 - `--chars-per-second`: rough text splitting estimate. Lower values make shorter
   chunks.
 - `--max-chars`: explicit character limit per chunk, overriding the estimate.
+- `--boundary-mode`: `punctuate` adds a sentence ending to non-final chunks
+  that would otherwise end with a comma or without punctuation. This is enabled
+  by default and helps reduce garbled reads at chunk boundaries.
 - `--pause-ms`: silence between chunks.
 - `--edge-fade-ms`: tiny fade applied to chunk edges to reduce clicks.
 - `--normalize-chunks-db`: optional RMS normalization target for each chunk.
-- `--seed` and `--seed-mode`: reproducible chunk seeds.
+- `--seed` and `--seed-mode`: reproducible chunk seeds. Long-form defaults use
+  `--seed 12345 --seed-mode same` to keep the voice more stable across chunks.
 - `--save-chunks-dir` / `--no-save-chunks`: controls intermediate chunk WAVs.
 
 When `--ref-wav` is used, the script encodes it to a cached latent once and
 reuses that latent for every chunk, avoiding repeated reference encoding.
+
+For the most consistent voice, use a reference audio or speaker embedding and
+keep `seed-mode` set to `same`. If you run without any reference, the generated
+speaker can still drift more than a reference-conditioned run.
 
 ## Web UI
 

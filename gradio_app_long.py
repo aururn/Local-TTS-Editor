@@ -21,7 +21,14 @@ from irodori_tts.inference_runtime import (
     save_wav,
 )
 from irodori_tts.speaker_inversion import is_speaker_inversion_safetensors_path
-from long_infer import _chunk_seed, _preview_text, _visible_len, chunk_text, merge_audios
+from long_infer import (
+    _chunk_seed,
+    _preview_text,
+    _visible_len,
+    chunk_text,
+    merge_audios,
+    stabilize_chunk_boundaries,
+)
 
 
 CHECKPOINT_PRESETS = {
@@ -242,11 +249,24 @@ def _chunk_limit(
     return max(1, int(float(chunk_max_seconds) * float(chars_per_second)))
 
 
-def _make_chunk_table(chunks: list[str], chars_per_second: float) -> list[list[object]]:
+def _make_chunk_table(
+    chunks: list[str],
+    synthesis_chunks: list[str],
+    chars_per_second: float,
+) -> list[list[object]]:
     rows: list[list[object]] = []
     for i, chunk in enumerate(chunks, start=1):
         chars = _visible_len(chunk)
-        rows.append([i, chars, round(chars / float(chars_per_second), 1), _preview_text(chunk)])
+        synth_chunk = synthesis_chunks[i - 1]
+        rows.append(
+            [
+                i,
+                chars,
+                round(chars / float(chars_per_second), 1),
+                _preview_text(chunk),
+                "" if synth_chunk == chunk else _preview_text(synth_chunk),
+            ]
+        )
     return rows
 
 
@@ -256,7 +276,8 @@ def _prepare_chunks(
     chunk_max_seconds: float,
     chars_per_second: float,
     max_chars_raw: str | None,
-) -> tuple[list[str], int, list[list[object]], str]:
+    boundary_mode: str,
+) -> tuple[list[str], list[str], int, list[list[object]], str]:
     long_text = _resolve_long_text(text, uploaded_text_file)
     max_chars = _chunk_limit(
         chunk_max_seconds=float(chunk_max_seconds),
@@ -266,15 +287,19 @@ def _prepare_chunks(
     chunks = chunk_text(long_text, max_chars=max_chars)
     if not chunks:
         raise ValueError("Text produced no chunks.")
-    table = _make_chunk_table(chunks, float(chars_per_second))
+    synthesis_chunks = stabilize_chunk_boundaries(chunks, mode=str(boundary_mode))
+    table = _make_chunk_table(chunks, synthesis_chunks, float(chars_per_second))
     total_chars = sum(_visible_len(chunk) for chunk in chunks)
+    changed_boundaries = sum(1 for chunk, synth in zip(chunks, synthesis_chunks) if chunk != synth)
     summary = (
         f"chunks: {len(chunks)}\n"
         f"max_chars: {max_chars}\n"
         f"visible_chars: {total_chars}\n"
-        f"chunk_max_seconds: {float(chunk_max_seconds):.2f}"
+        f"chunk_max_seconds: {float(chunk_max_seconds):.2f}\n"
+        f"boundary_mode: {boundary_mode}\n"
+        f"boundary_adjustments: {changed_boundaries}"
     )
-    return chunks, max_chars, table, summary
+    return chunks, synthesis_chunks, max_chars, table, summary
 
 
 def _preview_chunks(
@@ -283,13 +308,15 @@ def _preview_chunks(
     chunk_max_seconds: float,
     chars_per_second: float,
     max_chars_raw: str | None,
+    boundary_mode: str,
 ) -> tuple[list[list[object]], str]:
-    _chunks, _max_chars, table, summary = _prepare_chunks(
+    _chunks, _synthesis_chunks, _max_chars, table, summary = _prepare_chunks(
         text,
         uploaded_text_file,
         chunk_max_seconds,
         chars_per_second,
         max_chars_raw,
+        boundary_mode,
     )
     return table, summary
 
@@ -461,6 +488,7 @@ def _run_long_generation(
     chunk_max_seconds: float,
     chars_per_second: float,
     max_chars_raw: str,
+    boundary_mode: str,
     pause_ms: float,
     edge_fade_ms: float,
     normalize_chunks_db_raw: str,
@@ -498,12 +526,13 @@ def _run_long_generation(
     lora_adapter_raw: str,
     progress: gr.Progress = gr.Progress(track_tqdm=False),
 ) -> tuple[str, str, list[list[object]], str]:
-    chunks, max_chars, table, summary = _prepare_chunks(
+    chunks, synthesis_chunks, max_chars, table, summary = _prepare_chunks(
         text,
         uploaded_text_file,
         chunk_max_seconds,
         chars_per_second,
         max_chars_raw,
+        boundary_mode,
     )
     runtime_key = _build_runtime_key(
         checkpoint=checkpoint,
@@ -577,7 +606,7 @@ def _run_long_generation(
             f"using manual chunk seconds={manual_chunk_seconds:.3f}"
         )
 
-    for i, chunk in enumerate(chunks, start=1):
+    for i, chunk in enumerate(synthesis_chunks, start=1):
         progress((i - 1) / len(chunks), desc=f"chunk {i}/{len(chunks)}")
         chunk_seed = _chunk_seed(seed, i, str(seed_mode))
         result = runtime.synthesize(
@@ -631,7 +660,7 @@ def _run_long_generation(
         chunk_path = save_wav(out_dir / f"chunk_{i:03d}.wav", result.audio, result.sample_rate)
         logs.extend(
             [
-                f"chunk {i:03d}: seed={result.used_seed} chars={_visible_len(chunk)}",
+                f"chunk {i:03d}: seed={result.used_seed} chars={_visible_len(chunks[i - 1])}",
                 f"chunk {i:03d}: saved={chunk_path}",
                 *_format_timings(result.stage_timings, result.total_to_decode),
                 *result.messages,
@@ -779,6 +808,11 @@ def build_ui() -> gr.Blocks:
                     step=0.25,
                 )
                 max_chars_raw = gr.Textbox(label="Max Chars", value="")
+                boundary_mode = gr.Dropdown(
+                    label="Boundary Mode",
+                    choices=["punctuate", "off"],
+                    value="punctuate",
+                )
             with gr.Row():
                 pause_ms = gr.Slider(label="Pause ms", minimum=0, maximum=1200, value=220, step=10)
                 edge_fade_ms = gr.Slider(
@@ -792,8 +826,8 @@ def build_ui() -> gr.Blocks:
 
         preview_btn = gr.Button("Preview Split")
         chunk_table = gr.Dataframe(
-            headers=["#", "chars", "est_sec", "text"],
-            datatype=["number", "number", "number", "str"],
+            headers=["#", "chars", "est_sec", "text", "synthesis_text"],
+            datatype=["number", "number", "number", "str", "str"],
             interactive=False,
         )
         preview_log = gr.Textbox(label="Run Log", lines=12, interactive=False)
@@ -808,11 +842,11 @@ def build_ui() -> gr.Blocks:
                     value=1.0,
                     step=0.01,
                 )
-                seed_raw = gr.Textbox(label="Seed", value="")
+                seed_raw = gr.Textbox(label="Seed", value="12345")
                 seed_mode = gr.Dropdown(
                     label="Seed Mode",
                     choices=["offset", "same", "random"],
-                    value="offset",
+                    value="same",
                 )
                 decode_mode = gr.Dropdown(
                     label="Decode Mode",
@@ -905,6 +939,7 @@ def build_ui() -> gr.Blocks:
             chunk_max_seconds,
             chars_per_second,
             max_chars_raw,
+            boundary_mode,
         ]
         preview_btn.click(
             _preview_chunks,
@@ -931,6 +966,7 @@ def build_ui() -> gr.Blocks:
                 chunk_max_seconds,
                 chars_per_second,
                 max_chars_raw,
+                boundary_mode,
                 pause_ms,
                 edge_fade_ms,
                 normalize_chunks_db_raw,

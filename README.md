@@ -1,7 +1,5 @@
 # local-tts Web UI 使い方
 
-このメモは、`Irodori-TTS` のGradio Web UIをローカルで起動して音声生成するための手順です。仮想環境のactivateは不要です。`Irodori-TTS\.venv\Scripts\python.exe` を直接使います。
-
 ## Irodori-TTS
 
 https://github.com/Aratako/Irodori-TTS

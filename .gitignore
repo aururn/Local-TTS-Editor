@@ -217,5 +217,6 @@ __marimo__/
 
 gradio_outputs/
 gradio_outputs_voicedesign/
+gradio_long_outputs/
 outputs/
 data/

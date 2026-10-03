@@ -8,6 +8,12 @@ from pathlib import Path
 import gradio as gr
 from huggingface_hub import hf_hub_download
 
+from gradio_common import (
+    coerce_gradio_file_path,
+    parse_optional_float,
+    parse_optional_int,
+    parse_optional_str,
+)
 from irodori_tts.gradio_emoji_palette import EMOJI_PALETTE_CSS, build_emoji_palette
 from irodori_tts.inference_runtime import (
     RuntimeKey,
@@ -67,39 +73,6 @@ def _on_t_schedule_mode_change(mode: str) -> object:
     return gr.update(interactive=str(mode).strip().lower() == "sway")
 
 
-def _parse_optional_float(raw: str | None, label: str) -> float | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() == "none":
-        return None
-    try:
-        return float(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be a float or blank.") from exc
-
-
-def _parse_optional_int(raw: str | None, label: str) -> int | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() == "none":
-        return None
-    try:
-        return int(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be an int or blank.") from exc
-
-
-def _parse_optional_str(raw: str | None) -> str | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() in {"none", "null", "off", "disable", "disabled", "base"}:
-        return None
-    return text
-
-
 def _format_timings(stage_timings: list[tuple[str, float]], total_to_decode: float) -> str:
     lines = [
         "[timing] ---- request ----",
@@ -115,30 +88,11 @@ def _resolve_ref_wav(uploaded_audio: str | None) -> str | None:
     return None
 
 
-def _coerce_gradio_file_path(value: object) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    if isinstance(value, dict):
-        for key in ("path", "name"):
-            candidate = value.get(key)
-            if candidate is not None and str(candidate).strip():
-                return str(candidate)
-        return None
-    candidate = getattr(value, "name", None)
-    if candidate is not None and str(candidate).strip():
-        return str(candidate)
-    text = str(value).strip()
-    return text or None
-
-
 def _resolve_speaker_embedding(
     uploaded_embedding: object,
     speaker_embedding_path_raw: str | None,
 ) -> str | None:
-    uploaded_path = _coerce_gradio_file_path(uploaded_embedding)
+    uploaded_path = coerce_gradio_file_path(uploaded_embedding)
     raw_path = None
     if speaker_embedding_path_raw is not None and str(speaker_embedding_path_raw).strip():
         raw_path = str(speaker_embedding_path_raw).strip()
@@ -261,16 +215,16 @@ def _run_generation(
     if requested_candidates > MAX_GRADIO_CANDIDATES:
         raise ValueError(f"num_candidates must be <= {MAX_GRADIO_CANDIDATES}.")
 
-    cfg_scale = _parse_optional_float(cfg_scale_raw, "cfg_scale")
-    truncation_factor = _parse_optional_float(truncation_factor_raw, "truncation_factor")
-    rescale_k = _parse_optional_float(rescale_k_raw, "rescale_k")
-    rescale_sigma = _parse_optional_float(rescale_sigma_raw, "rescale_sigma")
-    speaker_kv_scale = _parse_optional_float(speaker_kv_scale_raw, "speaker_kv_scale")
-    speaker_kv_min_t = _parse_optional_float(speaker_kv_min_t_raw, "speaker_kv_min_t")
-    speaker_kv_max_layers = _parse_optional_int(speaker_kv_max_layers_raw, "speaker_kv_max_layers")
-    seed = _parse_optional_int(seed_raw, "seed")
-    manual_seconds = _parse_optional_float(seconds_raw, "seconds")
-    lora_adapter = _parse_optional_str(lora_adapter_raw)
+    cfg_scale = parse_optional_float(cfg_scale_raw, "cfg_scale")
+    truncation_factor = parse_optional_float(truncation_factor_raw, "truncation_factor")
+    rescale_k = parse_optional_float(rescale_k_raw, "rescale_k")
+    rescale_sigma = parse_optional_float(rescale_sigma_raw, "rescale_sigma")
+    speaker_kv_scale = parse_optional_float(speaker_kv_scale_raw, "speaker_kv_scale")
+    speaker_kv_min_t = parse_optional_float(speaker_kv_min_t_raw, "speaker_kv_min_t")
+    speaker_kv_max_layers = parse_optional_int(speaker_kv_max_layers_raw, "speaker_kv_max_layers")
+    seed = parse_optional_int(seed_raw, "seed")
+    manual_seconds = parse_optional_float(seconds_raw, "seconds")
+    lora_adapter = parse_optional_str(lora_adapter_raw)
 
     ref_wav = _resolve_ref_wav(uploaded_audio=uploaded_audio)
     speaker_embedding = _resolve_speaker_embedding(

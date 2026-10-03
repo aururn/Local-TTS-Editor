@@ -9,6 +9,12 @@ from typing import Any
 import gradio as gr
 from huggingface_hub import hf_hub_download
 
+from gradio_common import (
+    coerce_gradio_file_path,
+    parse_optional_float,
+    parse_optional_int,
+    parse_optional_str,
+)
 from irodori_tts.inference_runtime import (
     RuntimeKey,
     SamplingRequest,
@@ -22,7 +28,6 @@ from irodori_tts.inference_runtime import (
 )
 from irodori_tts.speaker_inversion import is_speaker_inversion_safetensors_path
 from long_infer import _chunk_seed, _preview_text, _visible_len, chunk_text, merge_audios
-
 
 CHECKPOINT_PRESETS = {
     "v3 Base": "Aratako/Irodori-TTS-500M-v3",
@@ -151,58 +156,6 @@ def _on_t_schedule_mode_change(mode: str) -> object:
     return gr.update(interactive=str(mode).strip().lower() == "sway")
 
 
-def _parse_optional_float(raw: str | None, label: str) -> float | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() == "none":
-        return None
-    try:
-        return float(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be a float or blank.") from exc
-
-
-def _parse_optional_int(raw: str | None, label: str) -> int | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() == "none":
-        return None
-    try:
-        return int(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be an int or blank.") from exc
-
-
-def _parse_optional_str(raw: str | None) -> str | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() in {"none", "null", "off", "disable", "disabled", "base"}:
-        return None
-    return text
-
-
-def _coerce_gradio_file_path(value: object) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    if isinstance(value, dict):
-        for key in ("path", "name"):
-            candidate = value.get(key)
-            if candidate is not None and str(candidate).strip():
-                return str(candidate)
-        return None
-    candidate = getattr(value, "name", None)
-    if candidate is not None and str(candidate).strip():
-        return str(candidate)
-    text = str(value).strip()
-    return text or None
-
-
 def _read_text_file(path: str) -> str:
     file_path = Path(path)
     for encoding in ("utf-8-sig", "utf-8", "cp932"):
@@ -216,7 +169,7 @@ def _read_text_file(path: str) -> str:
 def _resolve_long_text(text: str | None, uploaded_text_file: object) -> str:
     if text is not None and str(text).strip():
         return str(text)
-    text_file = _coerce_gradio_file_path(uploaded_text_file)
+    text_file = coerce_gradio_file_path(uploaded_text_file)
     if text_file is None:
         raise ValueError("Text is required.")
     return _read_text_file(text_file)
@@ -234,7 +187,7 @@ def _chunk_limit(
         raise ValueError("chunk_max_seconds must be <= 30.0 for released checkpoints.")
     if chars_per_second <= 0:
         raise ValueError("chars_per_second must be > 0.")
-    max_chars = _parse_optional_int(max_chars_raw, "max_chars")
+    max_chars = parse_optional_int(max_chars_raw, "max_chars")
     if max_chars is not None:
         if max_chars <= 0:
             raise ValueError("max_chars must be > 0.")
@@ -411,9 +364,9 @@ def _resolve_conditioning(
     ref_normalize_db_raw: str | None,
     ref_ensure_max: bool,
 ) -> tuple[str | None, str | None, str | None, bool, list[str]]:
-    ref_wav = _coerce_gradio_file_path(uploaded_audio)
-    ref_latent = _coerce_gradio_file_path(uploaded_ref_latent)
-    ref_embed = _coerce_gradio_file_path(uploaded_speaker_embedding)
+    ref_wav = coerce_gradio_file_path(uploaded_audio)
+    ref_latent = coerce_gradio_file_path(uploaded_ref_latent)
+    ref_embed = coerce_gradio_file_path(uploaded_speaker_embedding)
     provided = [value is not None for value in (ref_wav, ref_latent, ref_embed)]
     if no_reference and any(provided):
         raise ValueError("No Reference cannot be combined with reference inputs.")
@@ -422,7 +375,7 @@ def _resolve_conditioning(
     if no_reference or not any(provided):
         return None, None, None, True, []
     if ref_wav is not None:
-        ref_normalize_db = _parse_optional_float(ref_normalize_db_raw, "ref_normalize_db")
+        ref_normalize_db = parse_optional_float(ref_normalize_db_raw, "ref_normalize_db")
         cached_ref_latent, messages = _encode_reference_latent_once(
             runtime=runtime,
             ref_wav=ref_wav,
@@ -533,7 +486,7 @@ def _run_long_generation(
     has_caption = bool(
         runtime.model_cfg.use_caption_condition and caption is not None and str(caption).strip()
     )
-    cfg_scale = _parse_optional_float(cfg_scale_raw, "cfg_scale")
+    cfg_scale = parse_optional_float(cfg_scale_raw, "cfg_scale")
     cfg_scale_text_value, cfg_scale_caption_value, cfg_scale_speaker_value, scale_messages = (
         resolve_cfg_scales(
             cfg_guidance_mode=str(cfg_guidance_mode),
@@ -546,17 +499,17 @@ def _run_long_generation(
         )
     )
 
-    seed = _parse_optional_int(seed_raw, "seed")
-    normalize_chunks_db = _parse_optional_float(normalize_chunks_db_raw, "normalize_chunks_db")
-    max_text_len = _parse_optional_int(max_text_len_raw, "max_text_len")
-    max_caption_len = _parse_optional_int(max_caption_len_raw, "max_caption_len")
-    truncation_factor = _parse_optional_float(truncation_factor_raw, "truncation_factor")
-    rescale_k = _parse_optional_float(rescale_k_raw, "rescale_k")
-    rescale_sigma = _parse_optional_float(rescale_sigma_raw, "rescale_sigma")
-    speaker_kv_scale = _parse_optional_float(speaker_kv_scale_raw, "speaker_kv_scale")
-    speaker_kv_min_t = _parse_optional_float(speaker_kv_min_t_raw, "speaker_kv_min_t")
-    speaker_kv_max_layers = _parse_optional_int(speaker_kv_max_layers_raw, "speaker_kv_max_layers")
-    lora_adapter = _parse_optional_str(lora_adapter_raw)
+    seed = parse_optional_int(seed_raw, "seed")
+    normalize_chunks_db = parse_optional_float(normalize_chunks_db_raw, "normalize_chunks_db")
+    max_text_len = parse_optional_int(max_text_len_raw, "max_text_len")
+    max_caption_len = parse_optional_int(max_caption_len_raw, "max_caption_len")
+    truncation_factor = parse_optional_float(truncation_factor_raw, "truncation_factor")
+    rescale_k = parse_optional_float(rescale_k_raw, "rescale_k")
+    rescale_sigma = parse_optional_float(rescale_sigma_raw, "rescale_sigma")
+    speaker_kv_scale = parse_optional_float(speaker_kv_scale_raw, "speaker_kv_scale")
+    speaker_kv_min_t = parse_optional_float(speaker_kv_min_t_raw, "speaker_kv_min_t")
+    speaker_kv_max_layers = parse_optional_int(speaker_kv_max_layers_raw, "speaker_kv_max_layers")
+    lora_adapter = parse_optional_str(lora_adapter_raw)
 
     logs: list[str] = [
         "runtime: reloaded" if reloaded else "runtime: reused",
@@ -588,7 +541,7 @@ def _run_long_generation(
                 ref_latent=ref_latent,
                 ref_embed=ref_embed,
                 no_ref=bool(no_ref),
-                ref_normalize_db=_parse_optional_float(ref_normalize_db_raw, "ref_normalize_db"),
+                ref_normalize_db=parse_optional_float(ref_normalize_db_raw, "ref_normalize_db"),
                 ref_ensure_max=bool(ref_ensure_max),
                 num_candidates=1,
                 decode_mode=str(decode_mode),

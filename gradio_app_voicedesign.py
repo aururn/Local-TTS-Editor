@@ -8,6 +8,11 @@ from pathlib import Path
 import gradio as gr
 from huggingface_hub import hf_hub_download
 
+from gradio_common import (
+    parse_optional_float,
+    parse_optional_int,
+    parse_optional_str,
+)
 from irodori_tts.gradio_emoji_palette import EMOJI_PALETTE_CSS, build_emoji_palette
 from irodori_tts.inference_runtime import (
     RuntimeKey,
@@ -72,39 +77,6 @@ def _on_codec_device_change(device: str) -> gr.Dropdown:
 
 def _on_t_schedule_mode_change(mode: str) -> object:
     return gr.update(interactive=str(mode).strip().lower() == "sway")
-
-
-def _parse_optional_float(raw: str | None, label: str) -> float | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() == "none":
-        return None
-    try:
-        return float(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be a float or blank.") from exc
-
-
-def _parse_optional_int(raw: str | None, label: str) -> int | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() == "none":
-        return None
-    try:
-        return int(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be an int or blank.") from exc
-
-
-def _parse_optional_str(raw: str | None) -> str | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if text == "" or text.lower() in {"none", "null", "off", "disable", "disabled", "base"}:
-        return None
-    return text
 
 
 def _format_timings(stage_timings: list[tuple[str, float]], total_to_decode: float) -> str:
@@ -246,15 +218,15 @@ def _run_generation(
     if requested_candidates > MAX_GRADIO_CANDIDATES:
         raise ValueError(f"num_candidates must be <= {MAX_GRADIO_CANDIDATES}.")
 
-    cfg_scale = _parse_optional_float(cfg_scale_raw, "cfg_scale")
-    max_text_len = _parse_optional_int(max_text_len_raw, "max_text_len")
-    max_caption_len = _parse_optional_int(max_caption_len_raw, "max_caption_len")
-    truncation_factor = _parse_optional_float(truncation_factor_raw, "truncation_factor")
-    rescale_k = _parse_optional_float(rescale_k_raw, "rescale_k")
-    rescale_sigma = _parse_optional_float(rescale_sigma_raw, "rescale_sigma")
-    seed = _parse_optional_int(seed_raw, "seed")
-    manual_seconds = _parse_optional_float(seconds_raw, "seconds")
-    lora_adapter = _parse_optional_str(lora_adapter_raw)
+    cfg_scale = parse_optional_float(cfg_scale_raw, "cfg_scale")
+    max_text_len = parse_optional_int(max_text_len_raw, "max_text_len")
+    max_caption_len = parse_optional_int(max_caption_len_raw, "max_caption_len")
+    truncation_factor = parse_optional_float(truncation_factor_raw, "truncation_factor")
+    rescale_k = parse_optional_float(rescale_k_raw, "rescale_k")
+    rescale_sigma = parse_optional_float(rescale_sigma_raw, "rescale_sigma")
+    seed = parse_optional_int(seed_raw, "seed")
+    manual_seconds = parse_optional_float(seconds_raw, "seconds")
+    lora_adapter = parse_optional_str(lora_adapter_raw)
 
     runtime, reloaded = get_cached_runtime(runtime_key)
     if not runtime.model_cfg.use_caption_condition:

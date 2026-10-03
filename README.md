@@ -17,7 +17,7 @@ https://github.com/Aratako/Irodori-TTS
 PowerShellで:
 
 ```powershell
-cd C:\Users\tr831\Documents\develop\local-tts\Irodori-TTS
+# clone したリポジトリのディレクトリで実行
 .\.venv\Scripts\python.exe .\gradio_app.py --server-name 127.0.0.1 --server-port 7860
 ```
 
@@ -46,7 +46,7 @@ Irodori-TTS\gradio_outputs\
 ## 長文版を起動
 
 ```powershell
-cd C:\Users\tr831\Documents\develop\local-tts\Irodori-TTS
+# clone したリポジトリのディレクトリで実行
 .\.venv\Scripts\python.exe .\gradio_app_long.py --server-name 127.0.0.1 --server-port 7862
 ```
 
@@ -83,7 +83,7 @@ Irodori-TTS\gradio_long_outputs\日時フォルダ\
 ## VoiceDesign版を起動
 
 ```powershell
-cd C:\Users\tr831\Documents\develop\local-tts\Irodori-TTS
+# clone したリポジトリのディレクトリで実行
 .\.venv\Scripts\python.exe .\gradio_app_voicedesign.py --server-name 127.0.0.1 --server-port 7861
 ```
 
@@ -162,3 +162,12 @@ CPUではかなり時間がかかります。GPUが使えるなら `Model Device
 ### 初回だけ時間がかかる
 
 Hugging Faceからモデルやcodecを取得します。2回目以降はキャッシュが効くので短くなります。
+
+## 開発時の検証
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+3つのWeb UIで共通の入力変換を、モデルやGPUを読み込まずに確認します。
+CIはWindowsとLinuxで実行します。実際の音声生成は、別途モデルを読み込んで確認してください。
